@@ -1,95 +1,71 @@
-# Installation Guide for Financial Model Analyzer
+# Financial Model Analyzer
 
-This guide will walk you through the process of setting up the Financial Model Analyzer on your computer, even if you're not familiar with programming.
+A desktop application that extracts and analyzes financial data from Excel files. This tool identifies key assumptions, financial returns, and cash flows from financial models.
 
-## Step 1: Install Python
+## Features
 
-The Financial Model Analyzer requires Python to run. If you don't have Python installed:
+- **Excel File Processing**: Upload and analyze Excel (.xlsx, .xls) financial models
+- **Automatic Detection**: Identifies common financial metrics, assumptions, and cash flows
+- **Organized Results**: View results in separate tabs for easy navigation
+- **Summary Generation**: Provides a comprehensive text summary of all findings
 
-1. Visit the official Python website: https://www.python.org/downloads/
-2. Download the latest version of Python for your operating system (Windows, macOS, or Linux)
-3. Run the installer
-   - **Important for Windows users**: Make sure to check the box that says "Add Python to PATH" during installation
-4. Follow the installation prompts to complete the installation
+## Getting Started
 
-To verify Python is installed correctly, open a command prompt (Windows) or terminal (macOS/Linux) and type:
+### Prerequisites
+
+- Python 3.7 or higher
+- Required Python packages (install using `pip install -r requirements.txt`):
+  - pandas
+  - openpyxl
+  - numpy
+
+### Installation
+
+1. Clone this repository or download the source code
 ```
-python --version
+git clone https://github.com/yourusername/financial-model-analyzer.git
+cd financial-model-analyzer
 ```
 
-You should see the Python version displayed. If you get an error, try using `python3 --version` instead.
-
-## Step 2: Download the Financial Model Analyzer
-
-1. Create a new folder on your computer where you want to store the application
-2. Save the following files to that folder:
-   - `financial_analyzer.py` (the main application file)
-   - `requirements.txt` (lists required packages)
-
-## Step 3: Install Required Packages
-
-1. Open a command prompt (Windows) or terminal (macOS/Linux)
-2. Navigate to the folder where you saved the files
-   - On Windows, you can type `cd C:\path\to\your\folder`
-   - On macOS/Linux, you can type `cd /path/to/your/folder`
-3. Install the required packages by typing:
+2. Install required packages
 ```
 pip install -r requirements.txt
 ```
 
-If that doesn't work, try:
-```
-python -m pip install -r requirements.txt
-```
-
-Or:
-```
-python3 -m pip install -r requirements.txt
-```
-
-## Step 4: Run the Application
-
-1. In the same command prompt or terminal window, type:
+3. Run the application
 ```
 python financial_analyzer.py
 ```
 
-Or if that doesn't work:
-```
-python3 financial_analyzer.py
-```
+## How to Use
 
-2. The Financial Model Analyzer application should now launch!
+1. Launch the application by running `financial_analyzer.py`
+2. Click the "Browse" button to select an Excel file containing a financial model
+3. Click "Analyze" to process the file
+4. Review the extracted information in the various tabs:
+   - **Summary**: Text overview of all findings
+   - **Assumptions**: Key parameters and variables used in the model
+   - **Financial Returns**: NPV, IRR, ROI, and other financial metrics
+   - **Cash Flows**: Cash flow projections from the model
 
-## Troubleshooting
+## How It Works
 
-### "Python is not recognized as an internal or external command"
-- Make sure Python is added to your PATH
-- Try using `python3` instead of `python`
-- Restart your computer and try again
+The application uses pattern recognition to identify:
 
-### "No module named pandas/openpyxl/etc."
-- Make sure you ran the `pip install -r requirements.txt` command successfully
-- Try installing packages individually: `pip install pandas openpyxl numpy`
+- **Assumptions**: By searching for cells containing terms like "assumption," "input," "parameter," or common financial terms
+- **Financial Returns**: By identifying typical financial metrics like NPV, IRR, payback period
+- **Cash Flows**: By locating cash flow tables and extracting their values
 
-### "Permission denied" errors
-- Try running the command prompt or terminal as an administrator (Windows) or using `sudo` (macOS/Linux)
+## Limitations
 
-### Application crashes when analyzing a file
-- Make sure your Excel file is not corrupted
-- Try using a different Excel file to see if the issue persists
-- Check that your Excel file contains financial model data in a standard format
+- Works best with well-structured, conventional financial models
+- May not correctly identify custom metrics or unconventional formatting
+- Designed for personal use and analysis, not for critical financial decision-making
 
-## Creating a Desktop Shortcut (Optional)
+## Contributing
 
-### Windows:
-1. Right-click on your desktop and select New > Shortcut
-2. In the location field, type: `python "C:\path\to\your\folder\financial_analyzer.py"`
-3. Click Next, name your shortcut "Financial Model Analyzer", and click Finish
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-### macOS:
-1. Open TextEdit and create a new file
-2. Write: `#!/bin/bash\ncd /path/to/your/folder/\npython3 financial_analyzer.py`
-3. Save as "run_analyzer.command"
-4. Open Terminal and type: `chmod +x /path/to/run_analyzer.command`
-5. Now you can double-click the file to run the application
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
