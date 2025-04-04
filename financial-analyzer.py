@@ -1,31 +1,318 @@
 import tkinter as tk
-from tkinter import filedialog, ttk, scrolledtext
+from tkinter import filedialog, ttk, scrolledtext, messagebox
 import pandas as pd
 import numpy as np
 import os
+import json
 import re
 from openpyxl import load_workbook
-import openpyxl
+import requests
+import threading
+import configparser
+import tempfile
+from pathlib import Path
+import base64
+import io
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.FileHandler("financial_analyzer.log"), logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+
+class GeminiModelProcessor:
+    """Handles the AI processing of Excel files using Google's Gemini API"""
+    
+    def __init__(self, api_key=None):
+        self.api_key = api_key or self._load_api_key()
+        self.api_base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+        self.model = "gemini-2.0-flash"  # Using Gemini flash model for faster responses
+    
+    def _load_api_key(self):
+        """Load API key from config file or environment variable"""
+        config = configparser.ConfigParser()
+        
+        # Try to load from config file
+        config_path = Path.home() / ".financial_analyzer" / "config.ini"
+        if config_path.exists():
+            config.read(config_path)
+            if "API" in config and "gemini_api_key" in config["API"]:
+                return config["API"]["gemini_api_key"]
+        
+        # Try to load from environment variable
+        import os
+        return os.environ.get("GEMINI_API_KEY")
+    
+    def save_api_key(self, api_key):
+        """Save API key to config file"""
+        config = configparser.ConfigParser()
+        
+        # Create directory if it doesn't exist
+        config_dir = Path.home() / ".financial_analyzer"
+        config_dir.mkdir(exist_ok=True, parents=True)
+        
+        config_path = config_dir / "config.ini"
+        
+        # Load existing config if it exists
+        if config_path.exists():
+            config.read(config_path)
+        
+        # Ensure API section exists
+        if "API" not in config:
+            config["API"] = {}
+        
+        # Set API key
+        config["API"]["gemini_api_key"] = api_key
+        
+        # Write to file
+        with open(config_path, "w") as f:
+            config.write(f)
+        
+        self.api_key = api_key
+    
+    def _extract_and_prepare_data(self, file_path):
+        """Extract key information from Excel file and prepare it for analysis"""
+        try:
+            # Load workbook
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+            
+            excel_structure = {
+                "filename": os.path.basename(file_path),
+                "sheets": []
+            }
+            
+            # Process each sheet
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                
+                # Extract sheet data (limited sample)
+                data = []
+                row_count = 0
+                for row in sheet.iter_rows(values_only=True):
+                    if row_count > 100:  # Limit to 100 rows per sheet for efficiency
+                        break
+                    # Convert any non-serializable types to strings
+                    processed_row = []
+                    for cell in row:
+                        if cell is None:
+                            processed_row.append(None)
+                        else:
+                            try:
+                                # Test if JSON serializable
+                                json.dumps(cell)
+                                processed_row.append(cell)
+                            except (TypeError, OverflowError):
+                                # Convert to string if not serializable
+                                processed_row.append(str(cell))
+                    data.append(processed_row)
+                    row_count += 1
+                
+                # Add sheet info
+                excel_structure["sheets"].append({
+                    "name": sheet_name,
+                    "data": data
+                })
+            
+            # Create structured data for AI
+            return excel_structure
+            
+        except Exception as e:
+            logger.error(f"Error extracting data from Excel: {e}", exc_info=True)
+            raise Exception(f"Failed to process Excel file: {str(e)}")
+    
+    def analyze_excel_file(self, file_path, progress_callback=None):
+        """
+        Analyze Excel file using Gemini AI to extract financial model information
+        
+        Args:
+            file_path: Path to Excel file
+            progress_callback: Callback function to update progress
+        
+        Returns:
+            Dictionary containing analysis results
+        """
+        if progress_callback:
+            progress_callback("Preparing Excel file for analysis...")
+        
+        # Check if API key is set
+        if not self.api_key:
+            raise ValueError("Gemini API key is not set. Please set it in Settings.")
+        
+        try:
+            # Extract data from Excel file
+            excel_data = self._extract_and_prepare_data(file_path)
+            
+            if progress_callback:
+                progress_callback("Sending data to Gemini AI for analysis...")
+            
+            # Analyze with AI
+            return self._analyze_with_gemini(excel_data, progress_callback)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing Excel file: {e}", exc_info=True)
+            raise
+    
+    def _analyze_with_gemini(self, excel_data, progress_callback=None):
+        """Analyze Excel data using Gemini API"""
+        if progress_callback:
+            progress_callback("Processing with Gemini AI model...")
+        
+        # Convert data to JSON
+        excel_data_json = json.dumps(excel_data)
+        
+        system_prompt = """
+            You are a financial model analysis expert. Your task is to analyze the Excel structure data provided
+            and extract the following information:
+            
+            1. Key assumptions used in the model (look for inputs, parameters, rates, growth values, etc.)
+            2. Financial returns (NPV, IRR, ROI, payback period, profit margins, etc.)
+            3. Cash flow projections and summary
+            
+            The data provided will include sheet names and rows from each sheet.
+            Use this information to identify financial model components and extract meaningful information.
+            
+            Look for patterns in the data that indicate:
+            - Input parameters or assumptions (often in dedicated sheets or sections)
+            - Calculation results showing financial returns
+            - Time series data showing cash flows or projections
+            - Summary metrics and KPIs
+            
+            Provide your analysis in a structured JSON format as follows:
+            {
+                "assumptions": [
+                    {"description": "Description of assumption", "value": "Value of assumption"}
+                ],
+                "financial_returns": {
+                    "npv": {"label": "NPV label as found", "value": "NPV value"},
+                    "irr": {"label": "IRR label as found", "value": "IRR value"},
+                    "payback_period": {"label": "Payback period label as found", "value": "Payback period value"},
+                    "roi": {"label": "ROI label as found", "value": "ROI value"},
+                    "profit_margin": {"label": "Profit margin label as found", "value": "Profit margin value"},
+                    "other_metrics": [
+                        {"label": "Other metric label", "value": "Other metric value"}
+                    ]
+                },
+                "cash_flows": [
+                    {
+                        "label": "Cash flow label",
+                        "periods": [
+                            {"period": "Period identifier", "value": "Cash flow value"}
+                        ]
+                    }
+                ],
+                "summary": "A text summary of the financial model analysis, including your interpretation of the model's purpose, key metrics, and overall financial outlook based on the data."
+            }
+            
+            Be thorough in examining all sheets and their data. If you can't find specific information, indicate that in your response.
+            Ensure your response is valid JSON and only includes the JSON. Do not include any other text before or after the JSON.
+            """
+        
+        user_prompt = "Please analyze this Excel financial model data and extract key information about assumptions, financial returns, and cash flows. Provide the analysis in the specified JSON format."
+        
+        # Add truncated data hint to help the AI
+        if len(excel_data["sheets"]) > 0:
+            sample_count = sum(1 for sheet in excel_data["sheets"] if len(sheet.get("data", [])) >= 100)
+            if sample_count > 0:
+                user_prompt += f" Note that {sample_count} sheet(s) were truncated to the first 100 rows to manage data size."
+        
+        # Prepare request for Gemini API
+        url = f"{self.api_base_url}/{self.model}:generateContent?key={self.api_key}"
+        
+        # Gemini API expects a different format than OpenAI
+        data = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": system_prompt},
+                        {"text": f"{user_prompt}\n\nExcel Data: {excel_data_json}"}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "topP": 0.8,
+                "topK": 40,
+                "maxOutputTokens": 8192,
+                "responseMimeType": "application/json"
+            }
+        }
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code != 200:
+                logger.error(f"Gemini API error: {response.status_code} - {response.text}")
+                raise Exception(f"Gemini API error: {response.status_code} - {response.text}")
+            
+            response_data = response.json()
+            
+            # Extract content from Gemini response
+            if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                candidate = response_data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    parts = candidate['content']['parts']
+                    if len(parts) > 0 and 'text' in parts[0]:
+                        ai_response = parts[0]['text']
+                    else:
+                        raise Exception("Unexpected response format from Gemini API")
+                else:
+                    raise Exception("Unexpected response format from Gemini API")
+            else:
+                raise Exception("No content returned from Gemini API")
+            
+            # Process the response to extract JSON
+            try:
+                # Try to find JSON in the response
+                json_start = ai_response.find('{')
+                json_end = ai_response.rfind('}') + 1
+                
+                if json_start != -1 and json_end != -1:
+                    json_str = ai_response[json_start:json_end]
+                    analysis_results = json.loads(json_str)
+                else:
+                    # If no JSON brackets found, try the whole response
+                    analysis_results = json.loads(ai_response)
+                
+                return analysis_results
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing JSON response: {e}", exc_info=True)
+                logger.error(f"Raw response: {ai_response[:500]}...")  # Log part of the response for debugging
+                raise Exception(f"Error parsing Gemini response as JSON: {e}")
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {e}", exc_info=True)
+            raise Exception(f"Failed to communicate with Gemini API: {str(e)}")
+
 
 class FinancialModelAnalyzer:
     def __init__(self, root):
         self.root = root
-        self.root.title("Financial Model Analyzer")
-        self.root.geometry("800x700")
-        self.root.minsize(800, 700)
+        self.root.title("Gemini AI Financial Model Analyzer")
+        self.root.geometry("900x700")
+        self.root.minsize(900, 700)
+        
+        # Create AI processor
+        self.ai_processor = GeminiModelProcessor()
         
         # Set up the main frame
         self.main_frame = ttk.Frame(root, padding="20")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Application title
-        title_label = ttk.Label(self.main_frame, text="Financial Model Analyzer", font=("Arial", 16, "bold"))
+        title_label = ttk.Label(self.main_frame, text="Gemini AI Financial Model Analyzer", font=("Arial", 16, "bold"))
         title_label.pack(pady=(0, 10))
         
         # Description
         desc_label = ttk.Label(self.main_frame, 
-                               text="Upload your Excel financial model to extract key assumptions and financial returns",
-                               wraplength=700)
+                               text="Upload your Excel financial model to extract key assumptions and financial returns using Gemini AI",
+                               wraplength=800)
         desc_label.pack(pady=(0, 20))
         
         # File selection frame
@@ -42,8 +329,17 @@ class FinancialModelAnalyzer:
         self.browse_button.pack(side=tk.LEFT, padx=(0, 10))
         
         # Analyze button
-        self.analyze_button = ttk.Button(self.file_frame, text="Analyze", command=self.analyze_file)
+        self.analyze_button = ttk.Button(self.file_frame, text="Analyze with Gemini", command=self.analyze_file)
         self.analyze_button.pack(side=tk.LEFT)
+        
+        # Settings button
+        self.settings_button = ttk.Button(self.file_frame, text="Settings", command=self.open_settings)
+        self.settings_button.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(self.main_frame, variable=self.progress_var, mode='indeterminate')
+        self.progress_bar.pack(fill=tk.X, pady=(0, 10))
         
         # Create a notebook for tabs
         self.notebook = ttk.Notebook(self.main_frame)
@@ -83,9 +379,11 @@ class FinancialModelAnalyzer:
                 "irr": None,
                 "payback_period": None,
                 "roi": None,
-                "profit_margin": None
+                "profit_margin": None,
+                "other_metrics": []
             },
-            "cash_flows": []
+            "cash_flows": [],
+            "summary": ""
         }
     
     def setup_assumptions_tab(self):
@@ -187,24 +485,64 @@ class FinancialModelAnalyzer:
             return
         
         try:
-            self.status_var.set("Analyzing file...")
-            self.root.update_idletasks()
+            # Start progress bar
+            self.progress_bar.start(10)
+            self.analyze_button.configure(state="disabled")
+            self.browse_button.configure(state="disabled")
             
             # Reset previous results
             self.clear_results()
             
-            # Analyze the Excel file
-            self.analyze_excel_file(file_path)
-            
-            # Display results
-            self.display_results()
-            
-            self.status_var.set("Analysis complete")
+            # Use threading to prevent UI freezing during API call
+            self.analysis_thread = threading.Thread(
+                target=self._run_analysis, 
+                args=(file_path,)
+            )
+            self.analysis_thread.daemon = True
+            self.analysis_thread.start()
             
         except Exception as e:
             self.status_var.set(f"Error: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            
+            # Stop progress bar
+            self.progress_bar.stop()
+            self.analyze_button.configure(state="normal")
+            self.browse_button.configure(state="normal")
+            
+            logger.error(f"Error analyzing file: {e}", exc_info=True)
+    
+    def _run_analysis(self, file_path):
+        try:
+            # Update status
+            self.root.after(0, lambda: self.status_var.set("Analyzing Excel file with Gemini AI..."))
+            
+            # Analyze with AI
+            results = self.ai_processor.analyze_excel_file(
+                file_path, 
+                progress_callback=lambda msg: self.root.after(0, lambda: self.status_var.set(msg))
+            )
+            
+            # Update UI with results
+            self.root.after(0, lambda: self._update_ui_with_results(results))
+            
+            # Update status
+            self.root.after(0, lambda: self.status_var.set("Analysis complete"))
+            
+        except Exception as e:
+            self.root.after(0, lambda: self.status_var.set(f"Error: {str(e)}"))
+            logger.error(f"Error in analysis thread: {e}", exc_info=True)
+        finally:
+            # Stop progress bar
+            self.root.after(0, lambda: self.progress_bar.stop())
+            self.root.after(0, lambda: self.analyze_button.configure(state="normal"))
+            self.root.after(0, lambda: self.browse_button.configure(state="normal"))
+    
+    def _update_ui_with_results(self, results):
+        # Update the results dictionary
+        self.results = results
+        
+        # Display results
+        self.display_results()
     
     def clear_results(self):
         # Clear results dictionary
@@ -215,9 +553,11 @@ class FinancialModelAnalyzer:
                 "irr": None,
                 "payback_period": None,
                 "roi": None,
-                "profit_margin": None
+                "profit_margin": None,
+                "other_metrics": []
             },
-            "cash_flows": []
+            "cash_flows": [],
+            "summary": ""
         }
         
         # Clear UI elements
@@ -233,309 +573,124 @@ class FinancialModelAnalyzer:
         for item in self.cashflow_tree.get_children():
             self.cashflow_tree.delete(item)
     
-    def analyze_excel_file(self, file_path):
-        # Load workbook with openpyxl for formula and cell inspection
-        workbook = load_workbook(file_path, data_only=True)
-        
-        # Process each worksheet
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            
-            # Convert worksheet to a list of lists for easier processing
-            data = []
-            for row in sheet.iter_rows():
-                row_data = []
-                for cell in row:
-                    row_data.append(cell.value)
-                data.append(row_data)
-            
-            # Find assumptions
-            self.find_assumptions(data)
-            
-            # Find financial returns
-            self.find_financial_returns(data)
-            
-            # Find cash flows
-            self.find_cash_flows(data)
-    
-    def find_assumptions(self, data):
-        assumption_keywords = ['assumption', 'input', 'parameter', 'variable']
-        
-        for row_idx, row in enumerate(data):
-            if not row or len(row) == 0:
-                continue
-            
-            for col_idx, cell in enumerate(row):
-                if cell is None:
-                    continue
-                
-                cell_str = str(cell).lower() if isinstance(cell, (str, int, float)) else ""
-                
-                # Check if this cell contains assumption keywords
-                if any(keyword in cell_str for keyword in assumption_keywords):
-                    # Look for value in adjacent cells
-                    value = None
-                    
-                    # Check right cell first
-                    if col_idx + 1 < len(row) and row[col_idx + 1] is not None:
-                        value = row[col_idx + 1]
-                    # Then check cell below
-                    elif row_idx + 1 < len(data) and col_idx < len(data[row_idx + 1]) and data[row_idx + 1][col_idx] is not None:
-                        value = data[row_idx + 1][col_idx]
-                    
-                    if value is not None:
-                        self.results["assumptions"].append({
-                            "description": str(cell),
-                            "value": value
-                        })
-        
-        # Also look for common financial model assumptions
-        common_assumptions = [
-            'discount rate', 'growth rate', 'tax rate', 'inflation', 
-            'capex', 'opex', 'revenue', 'cost'
-        ]
-        
-        for row_idx, row in enumerate(data):
-            if not row or len(row) == 0:
-                continue
-            
-            for col_idx, cell in enumerate(row):
-                if cell is None:
-                    continue
-                
-                cell_str = str(cell).lower() if isinstance(cell, (str, int, float)) else ""
-                
-                for assumption in common_assumptions:
-                    if assumption in cell_str:
-                        # Look for value in adjacent cells
-                        value = None
-                        
-                        # Check right cell first
-                        if col_idx + 1 < len(row) and row[col_idx + 1] is not None:
-                            value = row[col_idx + 1]
-                        # Then check cell below
-                        elif row_idx + 1 < len(data) and col_idx < len(data[row_idx + 1]) and data[row_idx + 1][col_idx] is not None:
-                            value = data[row_idx + 1][col_idx]
-                        
-                        if value is not None:
-                            # Avoid duplicates
-                            if not any(a["description"] == str(cell) for a in self.results["assumptions"]):
-                                self.results["assumptions"].append({
-                                    "description": str(cell),
-                                    "value": value
-                                })
-                        
-                        break
-    
-    def find_financial_returns(self, data):
-        return_indicators = {
-            'npv': ['npv', 'net present value'],
-            'irr': ['irr', 'internal rate of return'],
-            'payback_period': ['payback', 'payback period'],
-            'roi': ['roi', 'return on investment'],
-            'profit_margin': ['profit margin', 'margin']
-        }
-        
-        for row_idx, row in enumerate(data):
-            if not row or len(row) == 0:
-                continue
-            
-            for col_idx, cell in enumerate(row):
-                if cell is None:
-                    continue
-                
-                cell_str = str(cell).lower() if isinstance(cell, (str, int, float)) else ""
-                
-                # Check each financial indicator
-                for key, keywords in return_indicators.items():
-                    if any(keyword in cell_str for keyword in keywords):
-                        # Look for value in adjacent cells
-                        value = None
-                        
-                        # Check right cell first
-                        if col_idx + 1 < len(row) and row[col_idx + 1] is not None:
-                            value = row[col_idx + 1]
-                        # Then check cell below
-                        elif row_idx + 1 < len(data) and col_idx < len(data[row_idx + 1]) and data[row_idx + 1][col_idx] is not None:
-                            value = data[row_idx + 1][col_idx]
-                        
-                        if value is not None and self.results["financial_returns"][key] is None:
-                            self.results["financial_returns"][key] = {
-                                "label": str(cell),
-                                "value": value
-                            }
-                        
-                        break
-    
-    def find_cash_flows(self, data):
-        # Look for cash flow tables
-        cashflow_keywords = ['cash flow', 'cashflow', 'cash flows', 'cf']
-        
-        # Find potential cash flow tables
-        for row_idx, row in enumerate(data):
-            if not row or len(row) == 0:
-                continue
-            
-            for col_idx, cell in enumerate(row):
-                if cell is None:
-                    continue
-                
-                cell_str = str(cell).lower() if isinstance(cell, (str, int, float)) else ""
-                
-                if any(keyword in cell_str for keyword in cashflow_keywords):
-                    # Found potential cash flow table, try to extract it
-                    cashflows = self.extract_cash_flow_table(data, row_idx, col_idx)
-                    if cashflows:
-                        self.results["cash_flows"].extend(cashflows)
-                        return  # Just use the first cash flow table found for simplicity
-    
-    def extract_cash_flow_table(self, data, start_row, start_col):
-        cashflows = []
-        header_row = None
-        
-        # Look for header row (years or periods)
-        for i in range(start_row, min(start_row + 5, len(data))):
-            row = data[i]
-            if not row:
-                continue
-            
-            period_count = 0
-            for j in range(1, len(row)):
-                cell = row[j]
-                if cell is not None and (
-                    isinstance(cell, (int, float)) or 
-                    (isinstance(cell, str) and re.search(r'year|period|yr|\d+', cell, re.IGNORECASE))
-                ):
-                    period_count += 1
-            
-            if period_count >= 3:  # At least 3 periods to consider it a cashflow table
-                header_row = i
-                break
-        
-        if header_row is None:
-            return cashflows
-        
-        # Extract cash flow data
-        current_row = header_row + 1
-        while current_row < len(data) and current_row < header_row + 20:
-            row = data[current_row]
-            if not row or len(row) == 0:
-                current_row += 1
-                continue
-            
-            first_cell = row[0]
-            if first_cell is None:
-                current_row += 1
-                continue
-            
-            first_cell_str = str(first_cell).lower() if isinstance(first_cell, (str, int, float)) else ""
-            
-            if ('cash flow' in first_cell_str or 
-                'net' in first_cell_str or 
-                'total' in first_cell_str):
-                
-                periods = []
-                for i in range(1, len(row)):
-                    if i < len(row) and row[i] is not None:
-                        periods.append({
-                            "period": i,
-                            "value": row[i]
-                        })
-                
-                if periods:
-                    cashflows.append({
-                        "label": str(first_cell),
-                        "periods": periods
-                    })
-            
-            current_row += 1
-        
-        return cashflows
-    
     def display_results(self):
-        # Generate and display summary
-        summary = self.generate_summary()
-        self.summary_text.insert(tk.END, summary)
+        # Display summary
+        if "summary" in self.results and self.results["summary"]:
+            self.summary_text.insert(tk.END, self.results["summary"])
+        else:
+            self.summary_text.insert(tk.END, "No summary generated by AI analysis.")
         
         # Display assumptions
-        for assumption in self.results["assumptions"]:
-            self.assumptions_tree.insert("", tk.END, values=(
-                assumption["description"], 
-                assumption["value"]
-            ))
+        if "assumptions" in self.results:
+            for assumption in self.results["assumptions"]:
+                if "description" in assumption and "value" in assumption:
+                    self.assumptions_tree.insert("", tk.END, values=(
+                        assumption["description"], 
+                        assumption["value"]
+                    ))
         
         # Display financial returns
-        for key, value in self.results["financial_returns"].items():
-            if value is not None:
-                # Format label
-                formatted_label = key.replace('_', ' ').title()
-                
-                self.returns_tree.insert("", tk.END, values=(
-                    value["label"], 
-                    value["value"]
-                ))
+        if "financial_returns" in self.results:
+            for key, value in self.results["financial_returns"].items():
+                if key == "other_metrics" and isinstance(value, list):
+                    for metric in value:
+                        if "label" in metric and "value" in metric:
+                            self.returns_tree.insert("", tk.END, values=(
+                                metric["label"], 
+                                metric["value"]
+                            ))
+                elif value is not None and isinstance(value, dict) and "label" in value and "value" in value:
+                    self.returns_tree.insert("", tk.END, values=(
+                        value["label"], 
+                        value["value"]
+                    ))
         
         # Display cash flows
-        for cf in self.results["cash_flows"]:
-            if not cf["periods"]:
-                continue
-                
-            first = cf["periods"][0]
-            last = cf["periods"][-1]
-            
-            self.cashflow_tree.insert("", tk.END, values=(
-                cf["label"],
-                first["value"],
-                last["value"]
-            ))
-    
-    def generate_summary(self):
-        summary = "Financial Model Analysis Summary:\n\n"
-        
-        # Assumptions
-        if self.results["assumptions"]:
-            summary += "Key Assumptions:\n"
-            for assumption in self.results["assumptions"]:
-                summary += f"- {assumption['description']}: {assumption['value']}\n"
-            summary += "\n"
-        else:
-            summary += "No clear assumptions were identified in this model.\n\n"
-        
-        # Financial Returns
-        summary += "Financial Returns:\n"
-        has_returns = False
-        
-        for key, value in self.results["financial_returns"].items():
-            if value is not None:
-                has_returns = True
-                
-                # Format label
-                formatted_label = key.replace('_', ' ').title()
-                
-                summary += f"- {value['label'] or formatted_label}: {value['value']}\n"
-        
-        if not has_returns:
-            summary += "No clear financial return indicators were identified in this model.\n"
-        
-        # Cash Flows
-        if self.results["cash_flows"]:
-            summary += "\nCash Flow Summary:\n"
+        if "cash_flows" in self.results:
             for cf in self.results["cash_flows"]:
-                summary += f"- {cf['label']}: "
-                
-                # Get first and last period for summary
-                if cf["periods"]:
-                    first = cf["periods"][0]
-                    last = cf["periods"][-1]
+                if "label" in cf and "periods" in cf and cf["periods"]:
+                    periods = cf["periods"]
+                    first = periods[0] if len(periods) > 0 else {"value": "N/A"}
+                    last = periods[-1] if len(periods) > 0 else {"value": "N/A"}
                     
-                    summary += f"Starts at {first['value']} and ends at {last['value']}\n"
-                else:
-                    summary += "No period data available\n"
+                    self.cashflow_tree.insert("", tk.END, values=(
+                        cf["label"],
+                        first.get("value", "N/A"),
+                        last.get("value", "N/A")
+                    ))
+    
+    def open_settings(self):
+        """Open settings dialog"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+        settings_window.geometry("400x250")  # Made taller to ensure enough space
+        settings_window.minsize(400, 250)
+        settings_window.transient(self.root)
+        settings_window.grab_set()
         
-        return summary
+        # Create frame
+        frame = ttk.Frame(settings_window, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # API Key Entry
+        ttk.Label(frame, text="Gemini API Key:").pack(anchor=tk.W, pady=(0, 5))
+        
+        api_key_var = tk.StringVar()
+        api_key_var.set(self.ai_processor.api_key or "")
+        
+        api_key_entry = ttk.Entry(frame, textvariable=api_key_var, width=40, show="*")
+        api_key_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Show/Hide API Key
+        show_api_key_var = tk.BooleanVar()
+        show_api_key_var.set(False)
+        
+        show_api_key_cb = ttk.Checkbutton(
+            frame, 
+            text="Show API Key", 
+            variable=show_api_key_var,
+            command=lambda: api_key_entry.configure(show="" if show_api_key_var.get() else "*")
+        )
+        show_api_key_cb.pack(anchor=tk.W, pady=(0, 15))
+        
+        # API help text
+        help_text = ttk.Label(
+            frame, 
+            text="Get a Gemini API key from Google AI Studio\nhttps://makersuite.google.com/app/apikey",
+            wraplength=350, 
+            justify=tk.LEFT, 
+            font=("Arial", 8)
+        )
+        help_text.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Button frame to ensure visibility
+        button_frame = ttk.Frame(frame)
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        # Save button with better styling
+        save_button = ttk.Button(
+            button_frame, 
+            text="Save", 
+            command=lambda: self._save_settings(api_key_var.get(), settings_window)
+        )
+        save_button.pack(padx=5, pady=5, ipadx=10, ipady=5)  # Added padding for better visibility
+    
+    def _save_settings(self, api_key, settings_window):
+        """Save settings and close dialog"""
+        try:
+            self.ai_processor.save_api_key(api_key)
+            self.status_var.set("Settings saved successfully")
+            settings_window.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Error saving settings: {str(e)}")
+            logger.error(f"Error saving settings: {e}", exc_info=True)
 
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     app = FinancialModelAnalyzer(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

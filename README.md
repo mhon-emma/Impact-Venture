@@ -1,70 +1,103 @@
-# Financial Model Analyzer
+# Gemini AI Financial Model Analyzer
 
-A desktop application that extracts and analyzes financial data from Excel files. This tool identifies key assumptions, financial returns, and cash flows from financial models.
+An advanced Python application for analyzing Excel financial models using Google's Gemini AI. This tool extracts assumptions, financial returns, and cash flow data from Excel financial models of any structure or format.
 
 ## Features
 
-- **Excel File Processing**: Upload and analyze Excel (.xlsx, .xls) financial models
-- **Automatic Detection**: Identifies common financial metrics, assumptions, and cash flows
-- **Organized Results**: View results in separate tabs for easy navigation
-- **Summary Generation**: Provides a comprehensive text summary of all findings
+- **Gemini AI-Powered Analysis**: Uses Google's Gemini model to analyze financial models intelligently
+- **Structure-Agnostic**: Works with a wide variety of Excel financial model formats without relying on keyword search
+- **Key Data Extraction**:
+  - Identifies key assumptions and input parameters
+  - Extracts financial returns (NPV, IRR, ROI, profit margins, etc.)
+  - Analyzes cash flow projections
+- **Modern UI**: Clean interface with tabbed results display
+- **Progress Tracking**: Visual feedback during analysis process
+- **Large File Support**: Handles large Excel files with intelligent data extraction
 
-## Getting Started
+## Requirements
 
-### Prerequisites
-
-- Python 3.7 or higher
-- Required Python packages (install using `pip install -r requirements.txt`):
+- Python 3.7+
+- Google Gemini API key (available from [Google AI Studio](https://makersuite.google.com/app/apikey))
+- Required Python packages (included in requirements.txt):
+  - tkinter
   - pandas
-  - openpyxl
   - numpy
+  - openpyxl
+  - requests
 
-### Installation
+## Installation
 
-1. Clone this repository or download the source code
-```
-git clone https://github.com/yourusername/financial-model-analyzer.git
-cd financial-model-analyzer
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/gemini-financial-analyzer.git
+cd gemini-financial-analyzer
 ```
 
-2. Install required packages
-```
+2. Install the required packages:
+```bash
 pip install -r requirements.txt
 ```
 
-3. Run the application
-```
+3. Run the application:
+```bash
 python financial_analyzer.py
 ```
 
-## How to Use
+## Usage
 
-1. Launch the application by running `financial_analyzer.py`
-2. Click the "Browse" button to select an Excel file containing a financial model
-3. Click "Analyze" to process the file
-4. Review the extracted information in the various tabs:
-   - **Summary**: Text overview of all findings
-   - **Assumptions**: Key parameters and variables used in the model
-   - **Financial Returns**: NPV, IRR, ROI, and other financial metrics
-   - **Cash Flows**: Cash flow projections from the model
+1. Launch the application
+2. Enter your Gemini API key in the Settings dialog (first-time setup)
+3. Click "Browse" to select an Excel file containing a financial model
+4. Click "Analyze with Gemini" to process the file
+5. View the extracted information in the corresponding tabs:
+   - Summary: Overview of the financial model
+   - Assumptions: Key input parameters
+   - Financial Returns: NPV, IRR, ROI and other metrics
+   - Cash Flows: Cash flow projections summary
 
 ## How It Works
 
-The application uses pattern recognition to identify:
+The application extracts and processes Excel data in several steps:
 
-- **Assumptions**: By searching for cells containing terms like "assumption," "input," "parameter," or common financial terms
-- **Financial Returns**: By identifying typical financial metrics like NPV, IRR, payback period
-- **Cash Flows**: By locating cash flow tables and extracting their values
+1. **File Processing**:
+   - The app reads the Excel file using openpyxl
+   - It extracts data from each sheet (limiting to 100 rows per sheet for large files)
+   - All data is converted to a format suitable for AI analysis
+
+2. **AI Analysis**:
+   - The extracted data is sent to Google's Gemini API
+   - The AI analyzes the data structure to identify financial components
+   - Results are returned in structured JSON format
+
+3. **Results Display**:
+   - The application parses the AI's analysis
+   - Results are presented in a clean, organized interface with different tabs
+
+## API Key Security
+
+- Your Gemini API key is stored securely in a local configuration file at `~/.financial_analyzer/config.ini`
+- Keys are never transmitted except to the Gemini API for authorization
+- Option to show/hide the API key in the settings dialog
+
+## Benefits Over Traditional Methods
+
+- **No Keyword Dependencies**: Traditional financial analysis tools rely on specific keywords or cell locations, making them brittle when Excel templates change. This tool adapts to any format.
+- **Contextual Understanding**: Gemini AI understands the broader context of financial data, not just isolated cells.
+- **Comprehensive Analysis**: The AI can identify relationships between data points that rule-based systems might miss.
 
 ## Limitations
 
-- Works best with well-structured, conventional financial models
-- May not correctly identify custom metrics or unconventional formatting
-- Designed for personal use and analysis, not for critical financial decision-making
+- Requires an internet connection for AI processing
+- Analysis quality depends on the Gemini API's capabilities
+- Very complex or unusual financial models may not be fully understood
 
-## Contributing
+## Future Enhancements
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Support for more file formats (CSV, Google Sheets)
+- Offline mode with local model option
+- Custom templates for specific financial model types
+- Export capabilities for analysis results
+- Batch processing of multiple files
 
 ## License
 
