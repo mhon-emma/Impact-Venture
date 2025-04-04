@@ -16,12 +16,12 @@ import io
 import logging
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler("financial_analyzer.log"), logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#     handlers=[logging.FileHandler("financial_analyzer.log"), logging.StreamHandler()]
+# )
+# logger = logging.getLogger(__name__)
 
 class GeminiModelProcessor:
     """Handles the AI processing of Excel files using Google's Gemini API"""
